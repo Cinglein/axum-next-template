@@ -6,6 +6,11 @@ use axum::{
 use chrono::Utc;
 use futures_util::{stream::repeat_with, Stream};
 use serde::{Deserialize, Serialize};
+use sqlx::{
+    migrate,
+    migrate::{MigrateDatabase, MigrateError},
+    Error as SqlxError, Sqlite, SqlitePool,
+};
 use thiserror::Error;
 use tokio::time::Duration;
 use tokio_stream::StreamExt;
@@ -20,6 +25,10 @@ use ts_rs::TS;
 pub enum ServerErr {
     #[error("Error creating message stream")]
     MessageStreamErr(#[from] AxumError),
+    #[error("Error setting up sql server")]
+    SqlxErr(#[from] SqlxError),
+    #[error("Error migrating sql")]
+    SqlxMigrateErr(#[from] MigrateError),
 }
 
 #[derive(Serialize, Deserialize, TS)]
@@ -41,10 +50,14 @@ async fn sse_handler() -> Sse<impl Stream<Item = Result<Event, ServerErr>>> {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), ServerErr> {
     let dir = "frontend/out";
     let static_service =
         ServeDir::new(dir).not_found_service(ServeFile::new(format!("{dir}/404.html")));
+
+    Sqlite::create_database("sqlite::memory:").await?;
+    let pool = SqlitePool::connect("sqlite::memory:").await?;
+    migrate!().run(&pool).await?;
 
     let app = Router::new()
         .route("/hello", get(sse_handler))
@@ -54,4 +67,5 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     axum::serve(listener, app).await.unwrap();
+    Ok(())
 }
