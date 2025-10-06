@@ -1,67 +1,53 @@
-use axum::{
-    response::sse::{Event, Sse},
-    routing::get,
-    Error as AxumError, Router,
-};
-use chrono::Utc;
-use futures_util::{stream::repeat_with, Stream};
-use serde::{Deserialize, Serialize};
-use sqlx::{
-    migrate,
-    migrate::{MigrateDatabase, MigrateError},
-    Error as SqlxError, Sqlite, SqlitePool,
-};
-use thiserror::Error;
-use tokio::time::Duration;
-use tokio_stream::StreamExt;
+use axum::{extract::FromRef, routing::get, Router};
+use sqlx::{migrate, migrate::MigrateDatabase, Sqlite, SqlitePool};
 use tower_http::{
     compression::CompressionLayer,
     services::{ServeDir, ServeFile},
     trace::TraceLayer,
 };
-use ts_rs::TS;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
-#[derive(Error, Debug)]
-pub enum ServerErr {
-    #[error("Error creating message stream")]
-    MessageStreamErr(#[from] AxumError),
-    #[error("Error setting up sql server")]
-    SqlxErr(#[from] SqlxError),
-    #[error("Error migrating sql")]
-    SqlxMigrateErr(#[from] MigrateError),
+use db::*;
+use error::ServerErr;
+use sse::*;
+use ws::*;
+
+pub mod db;
+pub mod error;
+pub mod message;
+pub mod sse;
+pub mod ws;
+
+#[derive(Clone, FromRef)]
+struct AppState {
+    pool: SqlitePool,
 }
 
-#[derive(Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../frontend/src/bindings/")]
-struct Message {
-    pub data: String,
-}
-
-async fn sse_handler() -> Sse<impl Stream<Item = Result<Event, ServerErr>>> {
-    let stream = repeat_with(|| {
-        Event::default()
-            .json_data(Message {
-                data: format!("Hello, world! {:?}", Utc::now()),
-            })
-            .map_err(ServerErr::MessageStreamErr)
-    })
-    .throttle(Duration::from_secs(1));
-    Sse::new(stream).keep_alive(Default::default())
-}
+#[derive(OpenApi)]
+#[openapi(paths(db_handler, ws_handler, sse_handler))]
+struct ApiDoc;
 
 #[tokio::main]
 async fn main() -> Result<(), ServerErr> {
     let dir = "frontend/out";
-    let static_service =
-        ServeDir::new(dir).not_found_service(ServeFile::new(format!("{dir}/404.html")));
+    let static_service = ServeDir::new(dir)
+        .append_index_html_on_directories(true)
+        .not_found_service(ServeFile::new(format!("{dir}/404.html")));
 
     Sqlite::create_database("sqlite::memory:").await?;
     let pool = SqlitePool::connect("sqlite::memory:").await?;
     migrate!().run(&pool).await?;
 
+    let state = AppState { pool };
+
     let app = Router::new()
-        .route("/hello", get(sse_handler))
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
+        .route(SSE_HANDLER_PATH, get(sse_handler))
+        .route(DB_HANDLER_PATH, get(db_handler))
+        .route(WS_HANDLER_PATH, get(ws_handler))
         .fallback_service(static_service)
+        .with_state(state)
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http());
 
