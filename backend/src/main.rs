@@ -31,9 +31,8 @@ struct ApiDoc;
 #[tokio::main]
 async fn main() -> Result<(), ServerErr> {
     let dir = "frontend/out";
-    let static_service = ServeDir::new(dir)
-        .append_index_html_on_directories(true)
-        .not_found_service(ServeFile::new(format!("{dir}/404.html")));
+    let static_service =
+        ServeDir::new(dir).not_found_service(ServeFile::new(format!("{dir}/404.html")));
 
     Sqlite::create_database("sqlite::memory:").await?;
     let pool = SqlitePool::connect("sqlite::memory:").await?;
