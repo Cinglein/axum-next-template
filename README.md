@@ -1,0 +1,1 @@
+# Axum Next.js Template
