@@ -36,7 +36,7 @@ async fn main() -> Result<(), ServerErr> {
 
     Sqlite::create_database("sqlite::memory:").await?;
     let pool = SqlitePool::connect("sqlite::memory:").await?;
-    migrate!().run(&pool).await?;
+    migrate!("../migrations").run(&pool).await?;
 
     let state = AppState { pool };
 

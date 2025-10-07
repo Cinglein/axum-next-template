@@ -8,6 +8,7 @@
 /backend/target
 Cargo.lock
 /backend/Cargo.lock
+/backend/dev.db
 
 # dependencies
 /frontend/node_modules
